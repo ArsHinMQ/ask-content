@@ -1,30 +1,19 @@
 import json
-import os
 import pathlib
 import tempfile
 
 import yt_dlp
 from pydantic import BaseModel
 
-# Static cookie exports go stale fast (YouTube rotates __Secure-*PSIDTS server
-# side) and then get answered with a bot check, so prefer reading cookies LIVE
-# from a real browser profile: set YT_COOKIES_FROM_BROWSER=firefox (chrome,
-# brave, edge, ...). It takes precedence over COOKIES_FILE when set; otherwise
-# the cookies file below is used.
-COOKIES_FROM_BROWSER = os.environ.get("YT_COOKIES_FROM_BROWSER") or None
+# Default cookies file, anchored to the repo root so it does NOT depend on the
+# process's working directory. `YT_COOKIES_FILE` overrides it, and a live
+# browser profile (`YT_COOKIES_FROM_BROWSER`) takes precedence over both: static
+# cookie exports go stale fast (YouTube rotates __Secure-*PSIDTS server side)
+# and then get answered with a bot check.
+DEFAULT_COOKIES_FILE = pathlib.Path(__file__).resolve().parents[2] / "cookies.txt"
 
-# Anchored to the repo root (api/brain/yt_downloader.py -> parents[2]) so it does
-# NOT depend on the process's working directory: the server runs from api/
-# Override with the YT_COOKIES_FILE env var if needed.
-COOKIES_FILE = pathlib.Path(
-    os.environ.get(
-        "YT_COOKIES_FILE",
-        str(pathlib.Path(__file__).resolve().parents[2] / "cookies.txt"),
-    )
-)
-
-# Per-video transcript cache (same idea as temp.py's transcripts/ dir): hit
-# YouTube once per video, then serve from disk. Filename includes the language
+# Per-video transcript cache: hit YouTube once per video, then serve from disk.
+# Filename includes the language.
 CACHE_DIR = pathlib.Path(__file__).resolve().parents[2] / "transcripts"
 
 OPTS = {
@@ -37,7 +26,9 @@ OPTS = {
     "subtitlesformat": "json3",
 }
 
-# Models only conatin fields that are relevant to our use case. The actual data returned by yt-dlp has many more fields, but we don't need them.
+
+# Models only contain fields relevant to our use case: yt-dlp returns many
+# more fields, but we don't need them.
 class YTDownloaderSubtitleEventSegment(BaseModel):
     utf8: str
 
@@ -113,6 +104,38 @@ class YTDownloader:
         self._video_id = video_id
         self._language = language
 
+    @staticmethod
+    def _cookie_options() -> dict[str, object]:
+        """yt-dlp cookie options from the app settings; a browser profile wins."""
+        from config import get_settings
+
+        settings = get_settings()
+        if settings.yt_cookies_from_browser:
+            return {"cookiesfrombrowser": (settings.yt_cookies_from_browser,)}
+        cookies_file = pathlib.Path(settings.yt_cookies_file or DEFAULT_COOKIES_FILE)
+        if not cookies_file.exists():
+            raise RuntimeError(
+                f"Cookies file not found: {cookies_file}\n"
+                "Set YT_COOKIES_FROM_BROWSER=firefox to read cookies live "
+                "from a browser logged into YouTube, or point the "
+                "YT_COOKIES_FILE env var at an existing cookies file."
+            )
+        return {"cookiefile": str(cookies_file)}
+
+    @staticmethod
+    def _cookies_description() -> str:
+        """Human-readable cookie source for fetch diagnostics."""
+        try:
+            from config import get_settings
+
+            settings = get_settings()
+        except Exception:
+            return "(cookie settings unavailable)"
+        if settings.yt_cookies_from_browser:
+            return f"browser profile: {settings.yt_cookies_from_browser}"
+        cookies_file = pathlib.Path(settings.yt_cookies_file or DEFAULT_COOKIES_FILE)
+        return f"{cookies_file} (exists: {cookies_file.exists()})"
+
     def fetch(self) -> YTDownloaderResult:
         """Fetch the video's captions and duration, cached on disk per language.
 
@@ -137,17 +160,7 @@ class YTDownloader:
                 f"{self._language}.*"
             ]  # matches en, en-orig, en-US, ...
             opts["outtmpl"] = f"{tmp}/%(id)s"
-            if COOKIES_FROM_BROWSER:
-                opts["cookiesfrombrowser"] = (COOKIES_FROM_BROWSER,)
-            else:
-                if not COOKIES_FILE.exists():
-                    raise RuntimeError(
-                        f"Cookies file not found: {COOKIES_FILE}\n"
-                        "Set YT_COOKIES_FROM_BROWSER=firefox to read cookies live "
-                        "from a browser logged into YouTube, or point the "
-                        "YT_COOKIES_FILE env var at an existing cookies file."
-                    )
-                opts["cookiefile"] = str(COOKIES_FILE)
+            opts.update(self._cookie_options())
             logger = _CapturingLogger()
             opts["logger"] = logger
 
@@ -165,7 +178,8 @@ class YTDownloader:
             if not files:
                 raise RuntimeError(self._fetch_error_message(logger))
 
-            # prefer the plain language track (e.g. ".en.json3") over variants like ".en-orig"
+            # prefer the plain language track (e.g. ".en.json3") over
+            # variants like ".en-orig"
             chosen = next(
                 (
                     f
@@ -207,7 +221,7 @@ class YTDownloader:
         )
         return (
             f"{intro}\n"
-            f"cookies file: {COOKIES_FILE} (exists: {COOKIES_FILE.exists()})\n"
+            f"cookies: {self._cookies_description()}\n"
             f"yt-dlp log tail:\n{log_tail or '  | (no log output)'}{hint}"
         )
 

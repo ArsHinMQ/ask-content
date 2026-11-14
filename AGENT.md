@@ -4,28 +4,44 @@ Guidance for AI coding agents (and humans) working in this repo.
 
 ## Project overview
 
-**ask-a-youtube**: ask questions about a YouTube video and get answers grounded
-in its transcript.
+**ask-content**: ask questions about a YouTube video and get answers grounded
+in its transcript. YouTube is the only supported source for now (code symbols
+keep their `yt_*` names until a second source is added).
 
 - `api/` — FastAPI backend. Runs from `api/` as the working directory
   (`uvicorn main:app`); imports are rooted there (e.g. `from brain.llm import LLManager`).
-  Dependencies are in `api/venv` (`api/requirements.txt`), Python 3.13.
-- `client/` — frontend.
+  Dependencies are in `api/venv` (`api/requirements.txt`, dev tools in
+  `api/requirements-dev.txt`), Python 3.13.
 - The transcript is chunked into ~30s excerpts, embedded (LanceDB in
-  `api/yt_rag_db/`), and searched with hybrid retrieval before any LLM call.
+  `api/yt_rag_db/`), and searched semantically before any LLM call.
+
+## Development
+
+Run from the repository root (config in `pyproject.toml`):
+
+```sh
+api/venv/bin/ruff check .          # lint
+api/venv/bin/ruff format --check . # formatting
+api/venv/bin/pytest                # tests (pythonpath=api, testpaths=api/tests)
+```
+
+CI (`.github/workflows/ci.yml`) runs exactly these three commands on Python 3.13.
+
+Pure transcript math (window splitting, section lookup) lives in
+`api/brain/transcript.py` — no database or embedding imports, so its tests stay
+fast (`api/tests/test_transcript.py` asserts it does not pull in `brain.db`).
 
 ## OpenSpec (repo root)
 
-OpenSpec lives at the repo root (`openspec/`) and is shared between `api/` and
-`client/` — specs and changes describe the whole system, not one subproject.
+OpenSpec lives at the repo root (`openspec/`) and describes the whole system.
 
 - `openspec/` — spec-driven workflow (proposal → specs → design → tasks);
   config in `openspec/config.yaml`, current specs in `openspec/specs/`,
   in-flight changes in `openspec/changes/`.
-- `openspec/specs/` holds the **baseline** (current behavior): `video-ingestion`,
-  `question-answering`, `prompt-management`. Keep these in sync with reality —
-  changes propose deltas against them, and archiving a change merges the deltas
-  back in.
+- `openspec/specs/` holds the **baseline** (current behavior): `request-validation`,
+  `question-answering`, `video-ingestion`, `video-sectioning`,
+  `prompt-management`. Keep these in sync with reality — changes propose deltas
+  against them, and archiving a change merges the deltas back in.
 - Run `openspec` CLI commands from the repo root.
 - Cline integration: skills in `.cline/skills/openspec-*` and slash-command
   workflows in `.clinerules/workflows/opsx-*.md` (e.g. `/opsx-propose` to
@@ -109,11 +125,11 @@ api/brain/llm/
 
 ### Testing LLM code
 
-There is no test suite yet. When adding one, follow the smoke-test pattern that
-validated this module: monkeypatch `llmanager._build_model` (kept module-level
-for exactly this reason) to return `pydantic_ai.models.test.TestModel()` —
-this exercises the full render → agent → validate pipeline with no network or
-API key.
+`api/tests/test_prompts.py` covers this module. Follow the same pattern when
+adding tests: monkeypatch `llmanager._build_model` (kept module-level for
+exactly this reason) to return `pydantic_ai.models.test.TestModel()` — this
+exercises the full render → agent → validate pipeline with no network or API
+key.
 
 ## Gotchas
 
@@ -121,8 +137,9 @@ API key.
   **literal** sent to the LLM as-is. If it was meant to be a variable, change it
   to `{{max_ranges}}` and pass `max_ranges=...` to `process`. Also note it still
   says "ranges"/"excerpts" — reword if the output shape changes.
-- Run Python/pytest from `api/` so `brain.*` imports resolve:
-  `cd api && venv/bin/python ...`.
+- Run Python one-liners from `api/` so `brain.*` imports resolve:
+  `cd api && venv/bin/python ...`. `pytest` is configured at the repo root and
+  runs from there (`pythonpath = ["api"]`).
 - `config.get_settings()` is env-var driven and fails fast if
   `OPENROUTER_API_KEY` is unset — but it is only imported lazily inside
   `_build_model`, so tests can patch that function to avoid needing env vars.

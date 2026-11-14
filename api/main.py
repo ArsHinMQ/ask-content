@@ -1,25 +1,33 @@
+import logging
 from time import perf_counter
+from typing import Annotated
 
 from brain.llm import FindPossibleAnswersResult, LLManager
 from brain.yt_embedder import YTEmbedder, YTEmbedderChunk, YTEmbedderMetadata
-from fastapi import FastAPI
+from fastapi import FastAPI, Path
 from pydantic import BaseModel
 
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(message)s")
+
 app = FastAPI()
+logger = logging.getLogger(__name__)
+
+# Validated at the trust boundary: these values reach cache filenames and
+# database filters, so malformed input is rejected with 422 before the handler.
+VideoID = Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]{11}$")]
+Language = Annotated[str, Path(pattern=r"^[a-z]{2,3}(-[A-Za-z]{2,4})?$")]
 
 
-class ResInitNewVideo(YTEmbedderMetadata):
-    pass
-
-
-@app.post("/init/{video_id}/{language}", response_model=ResInitNewVideo)
-async def init_new_video(video_id: str, language: str):
+@app.post("/init/{video_id}/{language}", response_model=YTEmbedderMetadata)
+async def init_new_video(video_id: VideoID, language: Language):
     started = perf_counter()
     yte = YTEmbedder(video_id, language)
     await yte.init_video()
     metadata = yte.get_metadata()
-    print(f"[init] {video_id}/{language} total {perf_counter() - started:.1f}s", flush=True)
-    return ResInitNewVideo(**metadata.model_dump())
+    logger.info(
+        "[init] %s/%s total %.1fs", video_id, language, perf_counter() - started
+    )
+    return metadata
 
 
 class ReqAskAboutVideo(BaseModel):
@@ -56,32 +64,32 @@ async def _retrieve_and_select(
     yte_result = yte.search(question, section_ids=section_ids)
     segment_ids = {ytr.segment_id: ytr for ytr in yte_result}
     for q in queries:
-        print(q)
         nyte_result = yte.search(q, section_ids=section_ids)
         for r in nyte_result:
             if r.segment_id in segment_ids:
                 continue
             yte_result.append(r)
             segment_ids[r.segment_id] = r
-    print(f"{label} rag {perf_counter() - rag_started:.1f}s, {len(yte_result)} candidates", flush=True)
     rag_time = perf_counter() - rag_started
     if not yte_result:
-        print(f"{label} rag {rag_time:.1f}s, no candidates", flush=True)
+        logger.info("%s rag %.1fs, no candidates", label, rag_time)
         return None, segment_ids
+    logger.info("%s rag %.1fs, %d candidates", label, rag_time, len(yte_result))
 
     llm_started = perf_counter()
     result: FindPossibleAnswersResult = await llm_manager.process(
         "find_possible_answers", user_question=question, answer_options=yte_result
     )
-    print(
-        f"{label} rag {rag_time:.1f}s, llm {perf_counter() - llm_started:.1f}s",
-        flush=True,
+    logger.info(
+        "%s rag %.1fs, llm %.1fs", label, rag_time, perf_counter() - llm_started
     )
     return result, segment_ids
 
 
 @app.post("/ask/{video_id}/{language}", response_model=ResAskAboutVideo)
-async def ask_about_video(video_id: str, language: str, data: ReqAskAboutVideo):
+async def ask_about_video(
+    video_id: VideoID, language: Language, data: ReqAskAboutVideo
+):
     started = perf_counter()
     label = f"[ask] {video_id}/{language}"
     llm_manager = LLManager()
@@ -91,12 +99,12 @@ async def ask_about_video(video_id: str, language: str, data: ReqAskAboutVideo):
     # unsectioned one has no sections to select (empty list -> whole video).
     rag_started = perf_counter()
     section_ids = yte.select_sections(data.question)
-    print(f"{label} sections rag {perf_counter() - rag_started:.1f}s", flush=True)
+    logger.info("%s sections rag %.1fs", label, perf_counter() - rag_started)
     llm_started = perf_counter()
     refined_result = await llm_manager.process(
         "refine_user_question", user_question=data.question
     )
-    print(f"{label} refine llm {perf_counter() - llm_started:.1f}s", flush=True)
+    logger.info("%s refine llm %.1fs", label, perf_counter() - llm_started)
     result, segment_ids = await _retrieve_and_select(
         llm_manager,
         yte,
@@ -120,7 +128,7 @@ async def ask_about_video(video_id: str, language: str, data: ReqAskAboutVideo):
 
     res = ResAskAboutVideo(segments=[])
     if result is None:
-        print(f"{label} total {perf_counter() - started:.1f}s, 0 segments", flush=True)
+        logger.info("%s total %.1fs, 0 segments", label, perf_counter() - started)
         return res
     for row in result.segments:
         segment = segment_ids.get(row.segment_id)
@@ -135,8 +143,10 @@ async def ask_about_video(video_id: str, language: str, data: ReqAskAboutVideo):
                 reason=row.reason,
             )
         )
-    print(
-        f"{label} total {perf_counter() - started:.1f}s, {len(res.segments)} segments",
-        flush=True,
+    logger.info(
+        "%s total %.1fs, %d segments",
+        label,
+        perf_counter() - started,
+        len(res.segments),
     )
     return res

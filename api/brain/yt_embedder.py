@@ -1,14 +1,19 @@
+import logging
 from time import perf_counter
 from typing import Any
 
 from brain.db import chunk_table, section_table
 from brain.llm import LLManager, TitleSectionsResult
+from brain.transcript import section_id_for_start
+from brain.transcript import windows as transcript_windows
 from brain.yt_downloader import (
     YTDownloader,
     YTDownloaderSection,
     YTDownloaderSubtitle,
 )
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 # Videos at least this long are split into sections; shorter ones are ingested
 # exactly as before, with untagged chunks (design decision 1).
@@ -57,51 +62,11 @@ class YTEmbedder:
         self._video_id = video_id
         self._language = language
 
-    def _generate_segment_id(self, n: int):
+    def _generate_segment_id(self, n: int) -> str:
         return f"{self._video_id}_{self._language}_{n}"
 
-    def _generate_section_id(self, n: int):
+    def _generate_section_id(self, n: int) -> str:
         return f"{self._video_id}_{self._language}_sec{n}"
-
-    @staticmethod
-    def _windows(
-        transcript: YTDownloaderSubtitle, window: float
-    ) -> list[tuple[float, float, str]]:
-        """Split caption events into consecutive `window`-second spans.
-
-        Segments accumulate events until they span `window` seconds, then the
-        next one starts at the following event; a final partial window is kept.
-        """
-        windows: list[tuple[float, float, str]] = []
-        buf: list[str] = []
-        start: float | None = None
-        for event in transcript.events:
-            if event.segs is None:
-                continue
-            if start is None:
-                start = event.tStartMs / 1000
-            for snippet in event.segs:
-                buf.append(snippet.utf8)
-            end = event.tStartMs / 1000 + event.dDurationMs / 1000
-            if end - start >= window:
-                windows.append((start, end, " ".join(buf)))
-                buf.clear()
-                start = None
-        if buf:
-            windows.append((start, end, " ".join(buf)))
-        return windows
-
-    @staticmethod
-    def _section_id_for_start(start: float, sections: list[YTEmbedderSection]) -> str:
-        """The section that owns a segment starting at `start`.
-
-        Sections partition the transcript chronologically, so the first one that
-        has not ended yet (or the last one, past its end) owns the segment.
-        """
-        for section in sections:
-            if start < section.end:
-                return section.section_id
-        return sections[-1].section_id
 
     def _chunk_transcript(
         self,
@@ -112,7 +77,7 @@ class YTEmbedder:
         sections = sections or []
         chunks: list[dict[str, Any]] = []
         for n, (start, end, text) in enumerate(
-            self._windows(transcript, window), start=1
+            transcript_windows(transcript, window), start=1
         ):
             chunks.append(
                 {
@@ -123,7 +88,7 @@ class YTEmbedder:
                     "end": end,
                     "language": self._language,
                     "section_id": (
-                        self._section_id_for_start(start, sections) if sections else ""
+                        section_id_for_start(start, sections) if sections else ""
                     ),
                 }
             )
@@ -133,7 +98,18 @@ class YTEmbedder:
         self, transcript: YTDownloaderSubtitle
     ) -> list[tuple[float, float, str]]:
         """The ~5-minute transcript windows that become this video's sections."""
-        return self._windows(transcript, SECTION_WINDOW_SECONDS)
+        return transcript_windows(transcript, SECTION_WINDOW_SECONDS)
+
+    @staticmethod
+    def _cache_matches(
+        cached: list[YTDownloaderSection],
+        windows: list[tuple[float, float, str]],
+    ) -> bool:
+        """Whether cached section ranges are exactly the current windows."""
+        return len(cached) == len(windows) and all(
+            section.start == start and section.end == end
+            for section, (start, end, _) in zip(cached, windows, strict=False)
+        )
 
     async def _title_sections(
         self, windows: list[tuple[float, float, str]]
@@ -166,7 +142,7 @@ class YTEmbedder:
             return []
         windows = self._split_sections(transcript)
         cached = self._downloader.load_cached_sections()
-        if cached is not None and len(cached) == len(windows):
+        if cached is not None and self._cache_matches(cached, windows):
             titled = cached
         else:
             titles = await self._title_sections(windows)
@@ -179,7 +155,7 @@ class YTEmbedder:
                     end=end,
                 )
                 for n, ((start, end, _), title) in enumerate(
-                    zip(windows, titles.sections), start=1
+                    zip(windows, titles.sections, strict=False), start=1
                 )
             ]
             self._downloader.cache_sections(titled)
@@ -204,21 +180,24 @@ class YTEmbedder:
             section_table.add([section.to_row() for section in sections])
         chunk_table.add(chunks_lst)
 
-    async def init_video(self):
+    async def init_video(self) -> None:
         started = perf_counter()
         fetched = self._downloader.fetch()
         fetched_at = perf_counter()
         sections = await self._sections(fetched.subtitle, fetched.duration)
         sectioned_at = perf_counter()
         self._store_transcript(fetched.subtitle, sections)
-        print(
-            f"[init] {self._video_id}/{self._language} fetch "
-            f"{fetched_at - started:.1f}s, sections {sectioned_at - fetched_at:.1f}s "
-            f"({len(sections)}), store+embed {perf_counter() - sectioned_at:.1f}s",
-            flush=True,
+        logger.info(
+            "[init] %s/%s fetch %.1fs, sections %.1fs (%d), store+embed %.1fs",
+            self._video_id,
+            self._language,
+            fetched_at - started,
+            sectioned_at - fetched_at,
+            len(sections),
+            perf_counter() - sectioned_at,
         )
 
-    def get_metadata(self):
+    def get_metadata(self) -> YTEmbedderMetadata:
         return YTEmbedderMetadata(video_id=self._video_id, language=self._language)
 
     def select_sections(

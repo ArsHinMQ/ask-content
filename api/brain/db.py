@@ -1,8 +1,11 @@
+from pathlib import Path
+
 import lancedb
 from lancedb.embeddings import get_registry
 from lancedb.pydantic import LanceModel, Vector
 
-db = lancedb.connect("./yt_rag_db")
+# Anchored to api/ so the database path does not depend on the working directory.
+db = lancedb.connect(str(Path(__file__).resolve().parents[1] / "yt_rag_db"))
 
 embed = (
     get_registry().get("sentence-transformers").create(name="BAAI/bge-small-en-v1.5")
@@ -45,7 +48,7 @@ def _schema_matches(table_schema, model: type[LanceModel]) -> bool:
         return False
     return all(
         actual.name == wanted.name and actual.type == wanted.type
-        for actual, wanted in zip(table_schema, expected)
+        for actual, wanted in zip(table_schema, expected, strict=False)
     )
 
 

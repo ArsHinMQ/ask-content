@@ -1,7 +1,7 @@
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Generic, Literal, TypeVar, overload
+from typing import Any, Literal, TypeVar, overload
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -23,7 +23,7 @@ OutputT = TypeVar("OutputT")
 
 
 @dataclass(frozen=True)
-class PromptSpec(Generic[OutputT]):
+class PromptSpec[OutputT]:
     """How to run one prompt.
 
     `output_type` is the pydantic-ai output type: a `BaseModel` subclass for
@@ -125,11 +125,15 @@ class LLManager:
 
         missing_keys = placeholder_keys - kwargs.keys()
         if missing_keys:
-            raise KeyError(f"Missing arguments for prompt '{name}': {sorted(missing_keys)}")
+            raise KeyError(
+                f"Missing arguments for prompt '{name}': {sorted(missing_keys)}"
+            )
 
         unused_kwargs = kwargs.keys() - placeholder_keys
         if unused_kwargs:
-            raise KeyError(f"Unused arguments for prompt '{name}': {sorted(unused_kwargs)}")
+            raise KeyError(
+                f"Unused arguments for prompt '{name}': {sorted(unused_kwargs)}"
+            )
 
         for key in placeholder_keys:
             template = template.replace("{{" + key + "}}", str(kwargs[key]))
@@ -176,5 +180,3 @@ def _build_model(model_name: str) -> OpenAIChatModel:
             api_key=s.openrouter_api_key,
         ),
     )
-
-

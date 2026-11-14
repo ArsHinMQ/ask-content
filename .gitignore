@@ -11,6 +11,7 @@ __pycache__/
 
 # Local data artifacts
 api/yt_rag_db/
+yt_rag_db/
 transcripts/
 cookies.txt
 250

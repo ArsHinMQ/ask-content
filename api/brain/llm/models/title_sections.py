@@ -4,8 +4,7 @@ from pydantic import BaseModel, Field
 class TitleSectionsResultSection(BaseModel):
     title: str = Field(
         description=(
-            "A short title (2 to 6 words) naming the topic of this transcript "
-            "section."
+            "A short title (2 to 6 words) naming the topic of this transcript section."
         )
     )
     summary: str = Field(
