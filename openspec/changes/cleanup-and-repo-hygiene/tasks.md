@@ -32,10 +32,10 @@
 
 ## 5. Publish and integrate
 
-- [ ] 5.1 Run `ruff check`, `ruff format --check`, and `pytest` from the repo root; verify all pass.
-- [ ] 5.2 Scan the stage: `git ls-files` contains no `.env`, `250`, `cookies.txt`, venv, DB or transcript paths, and `git grep -I -E "sk-or-|OPENROUTER_API_KEY=."` is empty.
-- [ ] 5.3 Create the public repo (`gh repo create ArsHinMQ/ask-content --public --source=. --remote=origin --push`); verify `gh repo view` shows it and the CI workflow run succeeds.
-- [ ] 5.4 Smoke the running app: `uvicorn main:app` from `api/`, `POST /init/<invalid>/en` returns `422`, and `/ask` against an already-cached video returns `200` with the documented shape.
+- [x] 5.1 Run `ruff check`, `ruff format --check`, and `pytest` from the repo root; verify all pass.
+- [x] 5.2 Scan the stage: `git ls-files` contains no `.env`, `250`, `cookies.txt`, venv, DB or transcript paths, and `git grep -I -E "sk-or-|OPENROUTER_API_KEY=."` is empty.
+- [x] 5.3 Create the public repo (`gh repo create ArsHinMQ/ask-content --public --source=. --remote=origin --push`); verify `gh repo view` shows it and the CI workflow run succeeds.
+- [x] 5.4 Smoke the running app: `uvicorn main:app` from `api/`, `POST /init/<invalid>/en` returns `422`, and `/ask` against an already-cached video returns `200` with the documented shape.
 
 ## Workflow follow-up
 
