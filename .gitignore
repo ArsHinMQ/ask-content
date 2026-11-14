@@ -1,0 +1,23 @@
+# Secrets
+.env
+
+# Virtual environments
+venv/
+api/venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Local data artifacts
+api/yt_rag_db/
+transcripts/
+cookies.txt
+250
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+
+# OS noise
+.DS_Store
