@@ -31,6 +31,34 @@ Pure transcript math (window splitting, section lookup) lives in
 `api/brain/transcript.py` — no database or embedding imports, so its tests stay
 fast (`api/tests/test_transcript.py` asserts it does not pull in `brain.db`).
 
+## Git workflow
+
+Every change reaches `main` through a squash-merged PR; commit to `main`
+directly never happens.
+
+- **Branches**: start from the latest `origin/main`
+  (`git fetch origin && git switch -c <branch> origin/main`). Names are
+  `feature|fix|refactor|clean-code|docs/<short-kebab-name>`. One branch = one
+  thing, finished in about a day. Never reuse a branch after its PR merges;
+  never force-push.
+- **Commits**: only when asked. Run lint + tests before committing and report
+  the result. Tests first for behavior changes: commit the failing tests, then
+  the code that makes them pass. One line, imperative, with a prefix (`feat:`,
+  `fix:`, `test:`, `docs:`, `refactor:`), naming the app when it isn't obvious
+  (`feat(api): ...`). Never stage with `git add -A` — stage files by name and
+  check `git status` first; no secrets, API keys or `.env` files. Never skip
+  hooks, never use interactive git commands.
+- **Pull requests** (via `gh`): titles start with a fitting emoji then a short
+  Title Case name, prefixed by branch type — `🏗️ <Name>` for feature,
+  `🔧 Fix | <emoji> <Name>`, `🚧 Refactor | <emoji> <Name>`,
+  `🧹 Clean Code | <emoji> <Name>`, `🗂️ Docs | <emoji> <Name>`. Merge with
+  `gh pr merge <n> --squash --subject "<PR title> (#<n>)"`, and never with a
+  red check. Ask before anything hard to undo or visible to others: pushing,
+  opening or merging a PR, deleting branches.
+- **Repo specifics**: `ArsHinMQ/ask-content` over SSH; gates are
+  `api/venv/bin/ruff check .`, `api/venv/bin/ruff format --check .` and
+  `api/venv/bin/pytest` (no typechecker, no local hooks — CI is the merge gate).
+
 ## OpenSpec (repo root)
 
 OpenSpec lives at the repo root (`openspec/`) and describes the whole system.
